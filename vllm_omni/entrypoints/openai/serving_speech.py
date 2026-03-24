@@ -721,7 +721,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         if task_type == "Base":
             if request.voice is None:
                 # 1. Ensure a voice source is provided
-                if request.ref_audio is None and getattr(request, 'speaker_embedding', None) is None:
+                if request.ref_audio is None and getattr(request, "speaker_embedding", None) is None:
                     return "Base task requires 'ref_audio' or 'speaker_embedding' for voice cloning"
                 # 2. Validate ref_audio format if it exists (using the helper from main)
                 if request.ref_audio is not None:
@@ -729,7 +729,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                     if fmt_err:
                         return fmt_err
                 # 3. Validate text requirements based on the mode
-                if not getattr(request, 'x_vector_only_mode', False):
+                if not getattr(request, "x_vector_only_mode", False):
                     if not request.ref_text or not request.ref_text.strip():
                         return (
                             "Base task requires non-empty 'ref_text' (transcript of "
