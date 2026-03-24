@@ -715,12 +715,13 @@ class TestTTSMethods:
         req = OpenAICreateSpeechRequest(input="Hello", task_type="Base", speaker_embedding=emb, x_vector_only_mode=True)
         assert speech_server._validate_tts_request(req) is None
 
-    def test_speaker_embedding_requires_x_vector_only_mode(self, speech_server):
-        """speaker_embedding without x_vector_only_mode fails ref_text validation."""
+    def test_speaker_embedding_auto_sets_x_vector_only_mode(self, speech_server):
+        """speaker_embedding auto-implies x_vector_only_mode, so validation passes."""
         emb = [0.1] * 1024
         req = OpenAICreateSpeechRequest(input="Hello", task_type="Base", speaker_embedding=emb)
         result = speech_server._validate_tts_request(req)
-        assert "x_vector_only_mode" in result
+        assert result is None
+        assert req.x_vector_only_mode is True
 
     def test_speaker_embedding_wrong_task_type(self, speech_server):
         """speaker_embedding is only valid for Base task."""
