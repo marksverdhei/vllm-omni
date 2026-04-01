@@ -467,6 +467,35 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             logger.error(f"Could not read audio file for voice {voice_name}: {e}")
             return None
 
+    def _get_uploaded_speaker_embedding(self, voice_name: str) -> list[float] | None:
+        """Load pre-computed speaker embedding for an uploaded voice.
+
+        Returns the embedding as a list of floats, or None if the voice
+        was not uploaded with an embedding (i.e. it has audio instead).
+        """
+        voice_name_lower = voice_name.lower()
+        if voice_name_lower not in self.uploaded_speakers:
+            return None
+
+        speaker_info = self.uploaded_speakers[voice_name_lower]
+        if speaker_info.get("embedding_source") != "direct":
+            return None
+
+        cache_file = speaker_info.get("cache_file")
+        if not cache_file or not Path(cache_file).exists():
+            logger.warning("Embedding file not found for voice %s: %s", voice_name, cache_file)
+            return None
+
+        try:
+            from safetensors.torch import load_file
+
+            tensors = load_file(cache_file)
+            embedding_tensor = tensors["speaker_embedding"]
+            return embedding_tensor.tolist()
+        except Exception as e:
+            logger.error("Could not load embedding for voice %s: %s", voice_name, e)
+            return None
+
     async def upload_voice(
         self,
         audio_file: UploadFile,
@@ -858,11 +887,11 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 # voice is not None
                 voice_lower = request.voice.lower()
                 if voice_lower in self.uploaded_speakers:
-                    # Check if audio file exists for uploaded speaker
+                    # Check if data file exists for uploaded speaker
                     speaker_info = self.uploaded_speakers[voice_lower]
                     file_path = Path(speaker_info["file_path"])
                     if not file_path.exists():
-                        return f"Audio file for uploaded speaker '{request.voice}' not found on disk"
+                        return f"Data file for uploaded speaker '{request.voice}' not found on disk"
                 else:
                     # need ref_audio for built-in speaker
                     if request.ref_audio is None:
@@ -1107,20 +1136,31 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             # Uploaded voices use task_type="Base" (CustomVoice requires built-in spk_id).
             # If ref_text was provided at upload time, use in-context cloning; otherwise x_vector only.
             if request.voice.lower() in self.uploaded_speakers and request.ref_audio is None:
-                audio_data = self._get_uploaded_audio_data(request.voice)
-                if not audio_data:
-                    raise ValueError(f"Audio file for uploaded voice '{request.voice}' is missing or corrupted")
                 speaker_info = self.uploaded_speakers[request.voice.lower()]
-                stored_ref_text = speaker_info.get("ref_text")
-                params["ref_audio"] = [audio_data]
-                params["task_type"] = ["Base"]
-                params["voice_created_at"] = [speaker_info.get("created_at", 0)]
-                if stored_ref_text:
-                    params["ref_text"] = [stored_ref_text]
-                    params["x_vector_only_mode"] = [False]
-                else:
+
+                # Check if this voice was uploaded with a pre-computed embedding
+                embedding = self._get_uploaded_speaker_embedding(request.voice)
+                if embedding is not None:
+                    params["voice_clone_prompt"] = [{"ref_spk_embedding": embedding}]
+                    params["task_type"] = ["Base"]
                     params["x_vector_only_mode"] = [True]
-                logger.info("Auto-set ref_audio for uploaded voice: %s (icl=%s)", request.voice, bool(stored_ref_text))
+                    logger.info("Auto-set speaker_embedding for uploaded voice: %s", request.voice)
+                else:
+                    audio_data = self._get_uploaded_audio_data(request.voice)
+                    if not audio_data:
+                        raise ValueError(f"Audio file for uploaded voice '{request.voice}' is missing or corrupted")
+                    stored_ref_text = speaker_info.get("ref_text")
+                    params["ref_audio"] = [audio_data]
+                    params["task_type"] = ["Base"]
+                    params["voice_created_at"] = [speaker_info.get("created_at", 0)]
+                    if stored_ref_text:
+                        params["ref_text"] = [stored_ref_text]
+                        params["x_vector_only_mode"] = [False]
+                    else:
+                        params["x_vector_only_mode"] = [True]
+                    logger.info(
+                        "Auto-set ref_audio for uploaded voice: %s (icl=%s)", request.voice, bool(stored_ref_text)
+                    )
 
         elif params["task_type"][0] == "CustomVoice":
             params["speaker"] = ["Vivian"]  # Default for CustomVoice
