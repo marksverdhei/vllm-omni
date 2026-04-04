@@ -1162,6 +1162,47 @@ class TestTTSMethods:
         # Must NOT have ref_audio — that would fail for safetensors files
         assert "ref_audio" not in params
 
+    def test_validate_rejects_embedding_voice_with_pending_cache(self, speech_server):
+        """Validation should reject embedding voices whose cache is not yet ready."""
+        speech_server.uploaded_speakers = {
+            "myvoice": {
+                "name": "myvoice",
+                "file_path": "/tmp/myvoice.safetensors",
+                "mime_type": "application/x-safetensors",
+                "embedding_source": "direct",
+                "cache_status": "pending",
+                "cache_file": None,
+            }
+        }
+        req = OpenAICreateSpeechRequest.model_validate({"input": "Hello", "speaker": "myvoice", "task_type": "Base"})
+        with patch("pathlib.Path.exists", return_value=True):
+            err = speech_server._validate_qwen_tts_request(req)
+        assert err is not None
+        assert "not yet ready" in err
+
+    def test_x_vector_only_mode_not_overwritten_for_uploaded_embedding(self, speech_server):
+        """x_vector_only_mode set by uploaded embedding must not be overwritten by request field."""
+        speech_server.uploaded_speakers = {
+            "emb_voice": {
+                "name": "emb_voice",
+                "file_path": "/tmp/emb_voice.safetensors",
+                "mime_type": "application/x-safetensors",
+                "embedding_source": "direct",
+                "embedding_dim": 1024,
+                "cache_status": "ready",
+                "cache_file": "/tmp/emb_voice.safetensors",
+            }
+        }
+        fake_emb = [0.1] * 1024
+        with patch.object(speech_server, "_get_uploaded_speaker_embedding") as mock_emb:
+            mock_emb.return_value = fake_emb
+            # Client explicitly sends x_vector_only_mode=False, but embedding requires True
+            req = OpenAICreateSpeechRequest(input="Hello", voice="emb_voice", x_vector_only_mode=False)
+            params = speech_server._build_tts_params(req)
+
+        assert params["x_vector_only_mode"] == [True]
+        assert "voice_clone_prompt" in params
+
     def test_max_instructions_length_default(self, speech_server):
         """Test default max instructions length (500) when no config provided."""
         # Fixture creates server with no CLI override and no TTS stage

@@ -488,10 +488,19 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
 
         try:
             from safetensors.torch import load_file
+        except ImportError:
+            logger.error(
+                "The 'safetensors' package is required to load speaker embeddings. "
+                "Install it with: pip install safetensors"
+            )
+            return None
 
+        try:
             tensors = load_file(cache_file)
-            embedding_tensor = tensors["speaker_embedding"]
-            return embedding_tensor.tolist()
+            if "speaker_embedding" not in tensors:
+                logger.warning("Key 'speaker_embedding' not found in %s for voice %s", cache_file, voice_name)
+                return None
+            return tensors["speaker_embedding"].squeeze().tolist()
         except Exception as e:
             logger.error("Could not load embedding for voice %s: %s", voice_name, e)
             return None
@@ -892,6 +901,12 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                     file_path = Path(speaker_info["file_path"])
                     if not file_path.exists():
                         return f"Data file for uploaded speaker '{request.voice}' not found on disk"
+                    # For embedding-uploaded voices, verify the cache is ready
+                    if speaker_info.get("embedding_source") == "direct":
+                        cache_file = speaker_info.get("cache_file")
+                        if not cache_file or not Path(cache_file).exists():
+                            status = speaker_info.get("cache_status", "unknown")
+                            return f"Speaker embedding for '{request.voice}' is not yet ready (cache_status='{status}')"
                 else:
                     # need ref_audio for built-in speaker
                     if request.ref_audio is None:
@@ -1185,7 +1200,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             ]
             # speaker_embedding implies x_vector_only_mode
             params["x_vector_only_mode"] = [True]
-        elif request.x_vector_only_mode is not None:
+        elif request.x_vector_only_mode is not None and "voice_clone_prompt" not in params:
             params["x_vector_only_mode"] = [request.x_vector_only_mode]
 
         # Generation parameters
