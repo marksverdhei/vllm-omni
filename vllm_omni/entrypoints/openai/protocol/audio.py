@@ -10,6 +10,9 @@ _MAX_EMBEDDING_DIM = 8192
 class OpenAICreateSpeechRequest(BaseModel):
     input: str
     model: str | None = None
+    # Accept both "voice" (OpenAI convention) and "speaker" (model/internal
+    # convention) as input keys.  Intentionally global — all TTS backends
+    # (Qwen3-TTS, Voxtral, Fish Speech) use this field for the speaker name.
     voice: str | None = Field(
         default=None,
         validation_alias=AliasChoices("voice", "speaker"),
