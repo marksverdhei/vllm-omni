@@ -486,6 +486,10 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             logger.warning("Embedding file not found for voice %s: %s", voice_name, cache_file)
             return None
 
+        if not _validate_path_within_directory(Path(cache_file), self.uploaded_speakers_dir):
+            logger.error("Cache file path traversal detected for voice %s: %s", voice_name, cache_file)
+            return None
+
         try:
             from safetensors.torch import load_file
         except ImportError:
@@ -1153,12 +1157,13 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             if request.voice.lower() in self.uploaded_speakers and request.ref_audio is None:
                 speaker_info = self.uploaded_speakers[request.voice.lower()]
 
-                # Check if this voice was uploaded with a pre-computed embedding
+                # Check if this voice was uploaded with a pre-computed embedding.
+                # Populate request.speaker_embedding so the existing code path
+                # (below) handles voice_clone_prompt and x_vector_only_mode.
                 embedding = self._get_uploaded_speaker_embedding(request.voice)
                 if embedding is not None:
-                    params["voice_clone_prompt"] = [{"ref_spk_embedding": embedding}]
+                    request.speaker_embedding = embedding
                     params["task_type"] = ["Base"]
-                    params["x_vector_only_mode"] = [True]
                     logger.info("Auto-set speaker_embedding for uploaded voice: %s", request.voice)
                 else:
                     audio_data = self._get_uploaded_audio_data(request.voice)
@@ -1200,7 +1205,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             ]
             # speaker_embedding implies x_vector_only_mode
             params["x_vector_only_mode"] = [True]
-        elif request.x_vector_only_mode is not None and "voice_clone_prompt" not in params:
+        elif request.x_vector_only_mode is not None:
             params["x_vector_only_mode"] = [request.x_vector_only_mode]
 
         # Generation parameters
